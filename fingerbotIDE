@@ -1,0 +1,400 @@
+
+
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
+#include <Servo.h>
+#include <ArduinoJson.h>
+#include <EEPROM.h>
+
+
+#define BOT_TOKEN "8694183903:AAGAm63WWtlM9Oqy-jC8LX1SxEpbk7g5KJQ"
+
+#ifndef USE_SERIAL
+  #define DEBUG(x)
+  #define DEBUGLN(x)
+#endif
+
+
+
+WiFiClientSecure secured_client;
+UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+
+#define SERVO_PIN 12
+#define SERVO_REPOS -20
+#define SERVO_APPUI 150
+
+Servo fingerServo;
+bool servoActif = false;
+
+const char* ap_ssid = "Fingerbot-Setup";
+const char* ap_password = "12345678";
+
+ESP8266WebServer server(80);
+
+String saved_ssid = "";
+String saved_password = "";
+
+#define EEPROM_SIZE 512
+#define SSID_ADDR 0
+#define PASS_ADDR 100
+
+void saveWiFiCredentials(String ssid, String password) {
+  EEPROM.begin(EEPROM_SIZE);
+  
+  for (int i = 0; i < 200; i++) {
+    EEPROM.write(i, 0);
+  }
+  
+  for (unsigned int i = 0; i < ssid.length(); i++) {
+    EEPROM.write(SSID_ADDR + i, ssid[i]);
+  }
+  
+  for (unsigned int i = 0; i < password.length(); i++) {
+    EEPROM.write(PASS_ADDR + i, password[i]);
+  }
+  
+  EEPROM.commit();
+  EEPROM.end();
+}
+
+void loadWiFiCredentials() {
+  EEPROM.begin(EEPROM_SIZE);
+  
+  saved_ssid = "";
+  for (int i = 0; i < 32; i++) {
+    char c = EEPROM.read(SSID_ADDR + i);
+    if (c == 0) break;
+    saved_ssid += c;
+  }
+  
+  saved_password = "";
+  for (int i = 0; i < 64; i++) {
+    char c = EEPROM.read(PASS_ADDR + i);
+    if (c == 0) break;
+    saved_password += c;
+  }
+  
+  EEPROM.end();
+}
+
+
+const char* html_page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fingerbot Setup</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      padding: 40px;
+      max-width: 400px;
+      width: 100%;
+    }
+    .logo { text-align: center; font-size: 60px; margin-bottom: 10px; }
+    h1 { text-align: center; color: #333; margin-bottom: 10px; font-size: 28px; }
+    .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }
+    .form-group { margin-bottom: 20px; }
+    label { display: block; color: #555; font-weight: 600; margin-bottom: 8px; font-size: 14px; }
+    input {
+      width: 100%;
+      padding: 12px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 16px;
+      transition: border 0.3s;
+    }
+    input:focus { outline: none; border-color: #667eea; }
+    button {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    button:active { transform: scale(0.98); }
+    .info {
+      background: #f0f4ff;
+      border-left: 4px solid #667eea;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 20px;
+      font-size: 13px;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">🤖</div>
+    <h1>Fingerbot Setup</h1>
+    <p class="subtitle">Configure ton WiFi</p>
+    <form action="/save" method="POST">
+      <div class="form-group">
+        <label>Nom du WiFi (SSID)</label>
+        <input type="text" name="ssid" placeholder="Ex: MEHRI" required>
+      </div>
+      <div class="form-group">
+        <label>Mot de passe</label>
+        <input type="password" name="password" placeholder="Mot de passe WiFi" required>
+      </div>
+      <button type="submit">💾 Enregistrer</button>
+    </form>
+    <div class="info">ℹ️ Le Fingerbot va se connecter au WiFi et redémarrer</div>
+  </div>
+</body>
+</html>
+)rawliteral";
+
+const char* success_page = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration Réussie</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      padding: 40px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .icon { font-size: 80px; margin-bottom: 20px; }
+    h1 { color: #11998e; margin-bottom: 15px; }
+    p { color: #666; line-height: 1.6; }
+    .info {
+      background: #e8f5e9;
+      border-radius: 10px;
+      padding: 15px;
+      margin-top: 20px;
+      font-size: 14px;
+      color: #2e7d32;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">✅</div>
+    <h1>Configuration Réussie!</h1>
+    <p>Le Fingerbot se connecte au WiFi...</p>
+    <div class="info">📱 Tu peux maintenant fermer cette page et ouvrir Telegram!</div>
+  </div>
+</body>
+</html>
+)rawliteral";
+
+
+void handleRoot() {
+  server.send(200, "text/html", html_page);
+}
+
+void handleSave() {
+  if (server.hasArg("ssid") && server.hasArg("password")) {
+    saved_ssid = server.arg("ssid");
+    saved_password = server.arg("password");
+    
+    saveWiFiCredentials(saved_ssid, saved_password);
+    server.send(200, "text/html", success_page);
+    
+    delay(2000);
+    ESP.restart();
+  } else {
+    server.send(400, "text/plain", "Erreur");
+  }
+}
+
+void startHotspot() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(ap_ssid, ap_password);
+  
+  server.on("/", handleRoot);
+  server.on("/save", HTTP_POST, handleSave);
+  server.begin();
+}
+
+bool connectWiFi() {
+  if (saved_ssid.length() == 0) return false;
+  
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(saved_ssid.c_str(), saved_password.c_str());
+  
+  int tentatives = 0;
+  while (WiFi.status() != WL_CONNECTED && tentatives < 20) {
+    delay(500);
+    tentatives++;
+    yield();
+  }
+  
+  return (WiFi.status() == WL_CONNECTED);
+}
+
+
+void handleNewMessages(int numNewMessages) {
+  if (numNewMessages == 0) return;
+  
+  int lastIndex = numNewMessages - 1;
+  String chat_id = String(bot.messages[lastIndex].chat_id);
+  String text = bot.messages[lastIndex].text;
+  String from_name = bot.messages[lastIndex].from_name;
+  
+  if (text == "/start") {
+    String welcome = "🤖 Fingerbot activé !\n\n";
+    welcome += "Commandes disponibles :\n";
+    welcome += "/press - Appuyer\n";
+    welcome += "/release - Relâcher\n";
+    welcome += "/tap - Tap rapide\n";
+    welcome += "/status - État du servo\n";
+    welcome += "/reset - Effacer WiFi";
+    bot.sendMessage(chat_id, welcome, "");
+  }
+  else if (text == "/press") {
+    fingerServo.write(SERVO_APPUI);
+    servoActif = true;
+    bot.sendMessage(chat_id, "✅ Bouton pressé !", "");
+  }
+  else if (text == "/release") {
+    fingerServo.write(SERVO_REPOS);
+    servoActif = false;
+    bot.sendMessage(chat_id, "✅ Bouton relâché !", "");
+  }
+  else if (text == "/tap") {
+    fingerServo.write(SERVO_APPUI);
+    delay(500);
+    fingerServo.write(SERVO_REPOS);
+    servoActif = false;
+    bot.sendMessage(chat_id, "✅ Tap effectué !", "");
+  }
+  else if (text == "/status") {
+    String status = servoActif ? "🟢 Actif (appuyé)" : "⚪ Repos";
+    bot.sendMessage(chat_id, status, "");
+  }
+  else if (text == "/reset") {
+    
+    EEPROM.begin(EEPROM_SIZE);
+    for (int i = 0; i < 200; i++) {
+      EEPROM.write(i, 0);
+    }
+    EEPROM.commit();
+    EEPROM.end();
+    
+    bot.sendMessage(chat_id, "✅ WiFi effacé ! Redémarrage en mode Hotspot...", "");
+    delay(2000);
+    ESP.restart();
+  }
+  
+  yield();
+}
+
+void setup() {
+  #ifdef USE_SERIAL
+    Serial.begin(115200);
+    delay(1000);
+    DEBUGLN("\n=== FINGERBOT ===");
+  #endif
+  
+  
+  delay(3000);
+  
+  // Servo
+  fingerServo.attach(SERVO_PIN);
+  fingerServo.write(SERVO_REPOS);
+  delay(500);
+  
+  // WiFi
+  loadWiFiCredentials();
+  
+  bool connected = false;
+  if (saved_ssid.length() > 0) {
+    DEBUGLN("Connexion WiFi...");
+    connected = connectWiFi();
+  }
+  
+  if (!connected) {
+    DEBUGLN("Mode Hotspot");
+    startHotspot();
+    
+    while(true) {
+      server.handleClient();
+      yield();
+      delay(10);
+    }
+  }
+  
+  DEBUGLN("WiFi OK");
+  
+  // Telegram
+  secured_client.setInsecure();
+  secured_client.setBufferSizes(1024, 1024); // Buffers plus petits
+  
+  delay(2000);
+  
+  bot.getUpdates(bot.last_message_received + 1);
+  
+  DEBUGLN("Bot prêt");
+}
+
+
+unsigned long lastCheck = 0;
+unsigned long lastWiFiCheck = 0;
+
+void loop() {
+  // WiFi check (toutes les 30s)
+  if (millis() - lastWiFiCheck > 30000) {
+    if (WiFi.status() != WL_CONNECTED) {
+      DEBUGLN("Reconnexion WiFi");
+      connectWiFi();
+    }
+    lastWiFiCheck = millis();
+  }
+  
+  // Messages Telegram (toutes les 1s)
+  if (millis() - lastCheck > 1000) {
+    yield();
+    
+    int num = bot.getUpdates(bot.last_message_received + 1);
+    
+    if (num > 0) {
+      DEBUGLN("Message reçu");
+      handleNewMessages(num);
+    }
+    
+    lastCheck = millis();
+  }
+  
+  yield();
+  delay(50);
+}
