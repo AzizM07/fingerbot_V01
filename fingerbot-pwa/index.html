@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0D0D0D">
+  <title>Fingerbot</title>
+  <link rel="manifest" href="manifest.json">
+  
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0D0D0D;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    
+    .container {
+      max-width: 400px;
+      width: 100%;
+    }
+    
+    .logo {
+      text-align: center;
+      font-size: 52px;
+      margin-bottom: 8px;
+    }
+    
+    h1 {
+      text-align: center;
+      font-size: 24px;
+      margin-bottom: 8px;
+    }
+    
+    .subtitle {
+      text-align: center;
+      color: #888;
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+    
+    .card {
+      background: #181818;
+      border: 1px solid #2C2C2C;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #888;
+      letter-spacing: 0.8px;
+      margin-bottom: 16px;
+    }
+    
+    .controls {
+      display: grid;
+      gap: 12px;
+    }
+    
+    .controls-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    
+    button {
+      background: #639922;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 16px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: opacity 0.2s;
+    }
+    
+    button:active {
+      opacity: 0.8;
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .btn-release {
+      background: #E24B4A;
+    }
+    
+    .btn-tap {
+      background: #EF9F27;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .status-icon {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #888;
+    }
+    
+    .status-icon.active {
+      background: #639922;
+    }
+    
+    .status-text {
+      flex: 1;
+      font-size: 14px;
+      color: #CCC;
+    }
+    
+    .status-value {
+      font-size: 14px;
+      font-weight: 600;
+      color: #888;
+    }
+    
+    .status-value.active {
+      color: #639922;
+    }
+    
+    .info {
+      text-align: center;
+      padding: 16px;
+      background: #181818;
+      border: 1px solid #2C2C2C;
+      border-radius: 12px;
+      font-size: 12px;
+      color: #888;
+    }
+    
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #181818;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    
+    .toast.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">🤖</div>
+    <h1>Fingerbot</h1>
+    <div class="subtitle">Contrôle via Telegram</div>
+    
+    <div class="card">
+      <div class="card-title">STATUT</div>
+      <div class="status">
+        <div class="status-icon" id="statusIcon"></div>
+        <div class="status-text">Servo</div>
+        <div class="status-value" id="statusText">Repos</div>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-title">CONTRÔLES</div>
+      <div class="controls">
+        <div class="controls-row">
+          <button onclick="sendCommand('/press')">
+            <span>👆</span>
+            <span>Press</span>
+          </button>
+          <button class="btn-release" onclick="sendCommand('/release')">
+            <span>✋</span>
+            <span>Release</span>
+          </button>
+        </div>
+        <button class="btn-tap" onclick="sendCommand('/tap')">
+          <span>⚡</span>
+          <span>Tap</span>
+        </button>
+      </div>
+    </div>
+    
+    <div class="info">
+      🌍 Contrôle depuis n'importe où
+    </div>
+  </div>
+  
+  <div class="toast" id="toast"></div>
+  
+  <script>
+    // Configuration
+    const BOT_USERNAME = 'Fingerbot_activbot';
+    
+    let servoActive = false;
+    
+    function sendCommand(command) {
+      // Ouvrir Telegram avec le message pré-rempli
+      const message = encodeURIComponent(command);
+      const url = `https://t.me/${BOT_USERNAME}?text=${message}`;
+      
+      // Ouvrir Telegram
+      window.open(url, '_blank');
+      
+      // Mettre à jour l'interface
+      updateStatus(command);
+      showToast('✅ Commande envoyée !');
+    }
+    
+    function updateStatus(command) {
+      const statusIcon = document.getElementById('statusIcon');
+      const statusText = document.getElementById('statusText');
+      
+      if (command === '/press') {
+        servoActive = true;
+      } else if (command === '/release' || command === '/tap') {
+        servoActive = false;
+      }
+      
+      if (servoActive) {
+        statusIcon.classList.add('active');
+        statusText.classList.add('active');
+        statusText.textContent = 'Actif';
+      } else {
+        statusIcon.classList.remove('active');
+        statusText.classList.remove('active');
+        statusText.textContent = 'Repos';
+      }
+    }
+    
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 2000);
+    }
+    
+    // Service Worker pour PWA
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
